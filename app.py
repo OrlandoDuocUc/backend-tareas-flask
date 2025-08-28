@@ -1,75 +1,98 @@
-import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
+from supabase import create_client, Client
+import os
 from dotenv import load_dotenv
-import requests
 
+# Cargar variables de entorno
 load_dotenv()
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_TABLE = "tasks"
 
 app = Flask(__name__)
 
-headers = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation"
-}
+# Configurar CORS para permitir múltiples orígenes
+CORS(app, origins=[
+    "http://localhost:3000",
+    "http://localhost:8000", 
+    "http://127.0.0.1:8000",
+    "http://localhost:5500",
+    "https://taskmaster-render-supabase-orlando.netlify.app"  # ← AGREGAR ESTA LÍNEA
+])
 
+# Configuración de Supabase
+url: str = os.environ.get("SUPABASE_URL")
+key: str = os.environ.get("SUPABASE_KEY")
+supabase: Client = create_client(url, key)
+
+# Ruta raíz
+@app.route('/')
+def home():
+    return jsonify({
+        "message": "API de Tareas funcionando correctamente",
+        "endpoints": {
+            "GET /tasks": "Obtener todas las tareas",
+            "POST /tasks": "Crear nueva tarea",
+            "PUT /tasks/<id>": "Actualizar tarea",
+            "DELETE /tasks/<id>": "Eliminar tarea"
+        }
+    })
 
 # Obtener todas las tareas
-@app.route("/tasks", methods=["GET"])
+@app.route('/tasks', methods=['GET'])
 def get_tasks():
-    url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}?select=*"
-    response = requests.get(url, headers=headers)
-    return jsonify(response.json()), response.status_code
+    try:
+        response = supabase.table('tasks').select('*').execute()
+        return jsonify(response.data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Crear una nueva tarea
-@app.route("/tasks", methods=["POST"])
+# Crear nueva tarea
+@app.route('/tasks', methods=['POST'])
 def create_task():
-    data = request.json
-    if not data.get("title") or not data.get("description"):
-        return jsonify({"error": "title y description son obligatorios"}), 400
-    url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}"
-    payload = [{
-        "title": data["title"],
-        "description": data["description"]
-    }]
-    response = requests.post(url, headers=headers, json=payload)
     try:
-        return jsonify(response.json()), response.status_code
-    except Exception:
-        return jsonify({"response": response.text}), response.status_code
+        data = request.get_json()
+        
+        if not data or not data.get('title') or not data.get('description'):
+            return jsonify({"error": "Título y descripción son requeridos"}), 400
+        
+        response = supabase.table('tasks').insert({
+            'title': data['title'],
+            'description': data['description']
+        }).execute()
+        
+        return jsonify(response.data[0]), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Actualizar una tarea
-@app.route("/tasks/<int:task_id>", methods=["PUT"])
+# Actualizar tarea
+@app.route('/tasks/<int:task_id>', methods=['PUT'])
 def update_task(task_id):
-    data = request.json
-    if not data.get("title") or not data.get("description"):
-        return jsonify({"error": "title y description son obligatorios"}), 400
-    url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}?id=eq.{task_id}"
-    payload = {
-        "title": data["title"],
-        "description": data["description"]
-    }
-    response = requests.patch(url, headers=headers, json=payload)
     try:
-        return jsonify(response.json()), response.status_code
-    except Exception:
-        return jsonify({"response": response.text}), response.status_code
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No se proporcionaron datos para actualizar"}), 400
+        
+        response = supabase.table('tasks').update(data).eq('id', task_id).execute()
+        
+        if not response.data:
+            return jsonify({"error": "Tarea no encontrada"}), 404
+        
+        return jsonify(response.data[0])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Eliminar una tarea
-@app.route("/tasks/<int:task_id>", methods=["DELETE"])
+# Eliminar tarea
+@app.route('/tasks/<int:task_id>', methods=['DELETE'])
 def delete_task(task_id):
-    url = f"{SUPABASE_URL}/rest/v1/{SUPABASE_TABLE}?id=eq.{task_id}"
-    response = requests.delete(url, headers=headers)
     try:
-        return jsonify(response.json()), response.status_code
-    except Exception:
-        return jsonify({"response": response.text}), response.status_code
+        response = supabase.table('tasks').delete().eq('id', task_id).execute()
+        
+        if not response.data:
+            return jsonify({"error": "Tarea no encontrada"}), 404
+        
+        return '', 204
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-# Esta es la parte que faltaba - iniciar el servidor Flask
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+if __name__ == '__main__':
+    app.run(debug=True)
